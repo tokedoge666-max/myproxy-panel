@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SELF=$(readlink -f -- "${BASH_SOURCE[0]}")
+PROJECT_ROOT=$(cd -- "$(dirname -- "$SELF")" && pwd -P)
+ENV_FILE="$PROJECT_ROOT/config/app.env"
+PYTHON_BIN="$PROJECT_ROOT/backend/.venv/bin/python"
+
+[[ "$PROJECT_ROOT" == /opt/myproxy || -f "$PROJECT_ROOT/.runtime-versions" ]] || {
+  printf 'myproxy: invalid project root: %s\n' "$PROJECT_ROOT" >&2
+  exit 1
+}
+if [[ "$PROJECT_ROOT" == /opt/myproxy && ${EUID} -ne 0 && $(id -un) != myproxy ]]; then
+  command -v sudo >/dev/null 2>&1 || {
+    printf 'myproxy: run this command as root or the myproxy service user\n' >&2
+    exit 1
+  }
+  exec sudo -- "$SELF" "$@"
+fi
+
+[[ -x "$PYTHON_BIN" ]] || {
+  printf 'myproxy: project Python is not installed: %s\n' "$PYTHON_BIN" >&2
+  exit 1
+}
+[[ -r "$ENV_FILE" ]] || {
+  printf 'myproxy: application environment is not readable: %s\n' "$ENV_FILE" >&2
+  exit 1
+}
+
+env_args=()
+declare -A seen_keys=()
+while IFS= read -r line || [[ -n "$line" ]]; do
+  [[ -n "$line" && "$line" != \#* ]] || continue
+  [[ "$line" != *$'\r'* && "$line" == *=* ]] || {
+    printf 'myproxy: malformed line in %s\n' "$ENV_FILE" >&2
+    exit 1
+  }
+  key=${line%%=*}
+  value=${line#*=}
+  [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || {
+    printf 'myproxy: invalid key in %s: %s\n' "$ENV_FILE" "$key" >&2
+    exit 1
+  }
+  [[ -z "${seen_keys[$key]:-}" ]] || {
+    printf 'myproxy: duplicate key in %s: %s\n' "$ENV_FILE" "$key" >&2
+    exit 1
+  }
+  seen_keys[$key]=1
+  [[ "$value" =~ ^[A-Za-z0-9_./,:@%+=-]*$ ]] || {
+    printf 'myproxy: unsafe value for %s in %s\n' "$key" "$ENV_FILE" >&2
+    exit 1
+  }
+  case "$key" in
+    MYPROXY_ENV|MYPROXY_HOME|MYPROXY_DB|MYPROXY_SINGBOX|MYPROXY_SINGBOX_CONFIG|\
+    MYPROXY_LOG_DIR|MYPROXY_BACKUP_DIR|MYPROXY_RUN_DIR|MYPROXY_SESSION_TTL|\
+    MYPROXY_COOKIE_SECURE|MYPROXY_ALLOWED_HOSTS|MYPROXY_CORS_ORIGINS|\
+    MYPROXY_USE_SUDO|MYPROXY_SYSTEMCTL|MYPROXY_SUDO|MYPROXY_SINGBOX_SERVICE|\
+    MYPROXY_SINGBOX_VERSION|MYPROXY_BACKUP_LIMIT|MYPROXY_CERTIFICATE_PATH|\
+    MYPROXY_PRIVATE_KEY_PATH|MYPROXY_SERVER_IP|MYPROXY_DOMAIN|\
+    MYPROXY_SELF_SIGNED_MODE|SERVER_IP|DOMAIN|ACME_EMAIL|SELF_SIGNED_MODE)
+      env_args+=("$key=$value")
+      ;;
+  esac
+done <"$ENV_FILE"
+
+cd -- "$PROJECT_ROOT/backend"
+if [[ "$PROJECT_ROOT" == /opt/myproxy && ${EUID} -eq 0 ]]; then
+  exec runuser -u myproxy -- env -i PATH=/usr/bin:/bin "${env_args[@]}" "$PYTHON_BIN" -m app.cli "$@"
+fi
+exec env -i PATH=/usr/bin:/bin "${env_args[@]}" "$PYTHON_BIN" -m app.cli "$@"

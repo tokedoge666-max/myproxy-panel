@@ -1,0 +1,12 @@
+/opt/myproxy/logs/sing-box.log {
+    daily
+    maxsize 20M
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su myproxy myproxy
+    create 0600 myproxy myproxy
+}

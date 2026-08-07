@@ -1,0 +1,34 @@
+[Unit]
+Description=MyProxy control-plane API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=myproxy
+Group=myproxy
+WorkingDirectory=/opt/myproxy/backend
+EnvironmentFile=/opt/myproxy/config/app.env
+ExecStart=/opt/myproxy/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=20s
+UMask=0077
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+LockPersonality=true
+ReadWritePaths=/opt/myproxy/data /opt/myproxy/logs /opt/myproxy/run /opt/myproxy/backups /opt/myproxy/config
+
+[Install]
+WantedBy=multi-user.target

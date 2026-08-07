@@ -1,0 +1,48 @@
+[project]
+name = "myproxy-panel-backend"
+version = "1.0.0"
+description = "Control plane for MyProxy Panel"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "alembic>=1.14.0,<2",
+  "argon2-cffi>=23.1.0,<26",
+  "fastapi>=0.115.0,<1",
+  "psutil>=6.1.0,<8",
+  "pydantic>=2.10.0,<3",
+  "PyYAML>=6.0.2,<7",
+  "sqlalchemy>=2.0.36,<3",
+  "uvicorn[standard]>=0.34.0,<1",
+]
+
+[project.scripts]
+myproxy-backend = "app.cli:main"
+
+[dependency-groups]
+dev = [
+  "httpx>=0.28.0,<1",
+  "pytest>=8.3.0,<9",
+  "pytest-cov>=6.0.0,<8",
+  "ruff>=0.12.0,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["../tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "UP"]
+ignore = ["B008"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "conftest"]

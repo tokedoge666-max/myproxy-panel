@@ -1,0 +1,35 @@
+[Unit]
+Description=MyProxy sing-box data plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=myproxy
+Group=myproxy
+WorkingDirectory=/opt/myproxy
+ExecStartPre=/opt/myproxy/.runtime/sing-box/sing-box check -c /opt/myproxy/config/sing-box.json
+ExecStart=/opt/myproxy/.runtime/sing-box/sing-box run -c /opt/myproxy/config/sing-box.json
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=20s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+LockPersonality=true
+ReadWritePaths=/opt/myproxy/logs /opt/myproxy/run
+
+[Install]
+WantedBy=multi-user.target
