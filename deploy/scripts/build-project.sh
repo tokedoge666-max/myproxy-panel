@@ -25,6 +25,10 @@ readonly NPM_CACHE_DIR="$MYPROXY_ROOT/.runtime/cache/npm"
 readonly BUILD_ROOT="$MYPROXY_ROOT/.build"
 FRONTEND_STAGE=''
 
+# The installer is commonly launched from a root-only source checkout. Do not
+# let unprivileged build commands inherit an inaccessible caller directory.
+cd -- "$MYPROXY_ROOT"
+
 seal_build_outputs() {
   local original_status=$?
   local cleanup_failed=0
@@ -78,7 +82,7 @@ build_backend() {
     UV_PYTHON_INSTALL_DIR="$UV_PYTHON_INSTALL_DIR" \
     UV_CACHE_DIR="$UV_CACHE_DIR" \
     UV_PYTHON_PREFERENCE=only-managed \
-    "$UV_BIN" python install "$PYTHON_VERSION"
+    "$UV_BIN" --no-config python install "$PYTHON_VERSION"
 
   log "syncing backend validation dependencies"
   (cd -- "$MYPROXY_ROOT/backend" && \
