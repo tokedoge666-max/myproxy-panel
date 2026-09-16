@@ -45,6 +45,7 @@ def _tls_config(settings: Settings) -> dict[str, Any]:
         )
     return {
         "enabled": True,
+        "alpn": ["h3"],
         "certificate_path": settings.certificate_path,
         "key_path": settings.private_key_path,
     }

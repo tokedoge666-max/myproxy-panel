@@ -86,6 +86,7 @@ def build_mihomo_proxies(
                 "obfs": "salamander",
                 "obfs-password": obfs["password"],
                 "sni": sni,
+                "alpn": ["h3"],
                 "skip-cert-verify": skip_verify,
                 "handshake-timeout": _integer_range(
                     config, "handshake_timeout", 15, 1, 60, node.name
@@ -111,6 +112,7 @@ def build_mihomo_proxies(
                     "uuid": str(parsed_uuid),
                     "password": config["password"],
                     "sni": sni,
+                    "alpn": ["h3"],
                     "skip-cert-verify": skip_verify,
                     "congestion-controller": config.get("congestion_control", "cubic"),
                     "udp-relay-mode": "native",

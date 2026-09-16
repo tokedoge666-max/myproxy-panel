@@ -51,10 +51,12 @@ def test_mihomo_and_provider_generation(client_bundle) -> None:
     assert all(proxy["ip-version"] == "ipv4-prefer" for proxy in mihomo["proxies"])
     assert hy2["handshake-timeout"] == 15
     assert hy2["bbr-profile"] == "standard"
+    assert hy2["alpn"] == ["h3"]
     assert "uuid" in tuic and "password" in tuic and "token" not in tuic
     assert tuic["reduce-rtt"] is False
     assert tuic["heartbeat-interval"] == 10_000
     assert tuic["request-timeout"] == 10_000
+    assert tuic["alpn"] == ["h3"]
     assert list(provider) == ["proxies"]
     assert provider["proxies"] == mihomo["proxies"]
 

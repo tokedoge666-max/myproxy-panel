@@ -343,6 +343,10 @@ make check
 4. 检查客户端订阅是否已更新；Token 轮换后必须使用新地址。
 5. TLS 模式下确认域名、SNI 和证书仍有效。
 
+若 Clash Verge Rev 日志出现 `CRYPTO_ERROR 0x178` 或
+`server did not select an ALPN protocol`，请先更新服务端，再刷新订阅；HY2 与
+TUIC 两端都必须协商 HTTP/3 的 `h3` ALPN。
+
 若面板提示 UDP 缓冲低于 16 MiB，重新执行 `sudo bash deploy/update.sh` 以安装持久化的 QUIC 缓冲配置；该上限不会在启动时预占 16 MiB 内存。
 
 ### 配置应用失败

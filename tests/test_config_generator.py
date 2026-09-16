@@ -59,6 +59,7 @@ def test_singbox_114_config_has_conservative_stability_fields() -> None:
     assert all(inbound["listen"] == "0.0.0.0" for inbound in config["inbounds"])
     assert hy2["obfs"]["type"] == "salamander"
     assert hy2["tls"]["enabled"] is True
+    assert hy2["tls"]["alpn"] == ["h3"]
     assert hy2["udp_timeout"] == "5m"
     assert hy2["ignore_client_bandwidth"] is True
     assert hy2["bbr_profile"] == "standard"
@@ -66,6 +67,7 @@ def test_singbox_114_config_has_conservative_stability_fields() -> None:
     assert tuic["heartbeat"] == "10s"
     assert tuic["auth_timeout"] == "3s"
     assert tuic["udp_timeout"] == "5m"
+    assert tuic["tls"]["alpn"] == ["h3"]
     assert "network" not in shadowsocks
     assert shadowsocks["method"] == "2022-blake3-aes-128-gcm"
     assert shadowsocks["tcp_keep_alive"] == "2m"
