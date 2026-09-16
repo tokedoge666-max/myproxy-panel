@@ -2,9 +2,11 @@
 .env.*
 !.env.example
 config/app.env
+config/sing-box.json
 config/*.pem
 config/*.key
 config/tls/
+.managed-service-account
 *.db
 *.db-shm
 *.db-wal
