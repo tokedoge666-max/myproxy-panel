@@ -137,8 +137,8 @@ assert_safe_tar_gz() {
 assert_ubuntu_2004() {
   [[ -r /etc/os-release ]] || die "/etc/os-release is missing"
   local os_id os_version
-  os_id=$(awk -F= '$1 == "ID" {gsub(/\"/, "", $2); print $2}' /etc/os-release)
-  os_version=$(awk -F= '$1 == "VERSION_ID" {gsub(/\"/, "", $2); print $2}' /etc/os-release)
+  os_id=$(awk -F= '$1 == "ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)
+  os_version=$(awk -F= '$1 == "VERSION_ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)
   [[ "$os_id" == ubuntu && "$os_version" == 20.04 ]] || \
     die "Ubuntu 20.04 is required; detected ${os_id:-unknown} ${os_version:-unknown}"
 }
