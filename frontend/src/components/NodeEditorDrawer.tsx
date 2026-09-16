@@ -34,7 +34,7 @@ function initialValues(node: ProxyNode | null): NodeFormValues {
     enabled: node?.enabled ?? true,
     up_mbps: typeof config.up_mbps === 'number' ? config.up_mbps : undefined,
     down_mbps: typeof config.down_mbps === 'number' ? config.down_mbps : undefined,
-    congestion_control: typeof config.congestion_control === 'string' ? config.congestion_control : 'bbr',
+    congestion_control: typeof config.congestion_control === 'string' ? config.congestion_control : 'cubic',
     heartbeat: typeof config.heartbeat === 'string' ? config.heartbeat : '10s',
     method:
       typeof config.method === 'string'
@@ -68,14 +68,16 @@ export function NodeEditorDrawer({ open, node, saving, onClose, onSave }: NodeEd
         // Keep explicit nulls so clearing an existing optional limit reaches the backend.
         up_mbps: values.up_mbps ?? null,
         down_mbps: values.down_mbps ?? null,
+        ignore_client_bandwidth: values.up_mbps == null && values.down_mbps == null,
       };
     } else if (values.protocol === 'tuic') {
+      const stableExisting = { ...existing };
+      delete stableExisting.version;
+      delete stableExisting.reduce_rtt;
       config = {
-        ...existing,
-        version: 5,
-        congestion_control: values.congestion_control ?? 'bbr',
+        ...stableExisting,
+        congestion_control: values.congestion_control ?? 'cubic',
         zero_rtt_handshake: false,
-        reduce_rtt: false,
         heartbeat: values.heartbeat ?? '10s',
       };
     } else {
@@ -158,10 +160,33 @@ export function NodeEditorDrawer({ open, node, saving, onClose, onSave }: NodeEd
             <Form.Item label="TLS">
               <Input value="使用系统证书" disabled />
             </Form.Item>
-            <Form.Item name="up_mbps" label="上行限速 Mbps（可选）">
+            <Form.Item
+              name="up_mbps"
+              label="Brutal 服务端上行声明 Mbps"
+              extra="仅在客户端也声明带宽时生效；面板订阅默认使用自适应 BBR，一般保持留空。"
+              dependencies={['down_mbps']}
+              rules={[({ getFieldValue }) => ({
+                validator(_, value) {
+                  return (value == null) === (getFieldValue('down_mbps') == null)
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('上下行限速需同时填写或同时留空'));
+                },
+              })]}
+            >
               <InputNumber min={1} precision={0} controls={false} placeholder="不限制" style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item name="down_mbps" label="下行限速 Mbps（可选）">
+            <Form.Item
+              name="down_mbps"
+              label="Brutal 服务端下行声明 Mbps"
+              dependencies={['up_mbps']}
+              rules={[({ getFieldValue }) => ({
+                validator(_, value) {
+                  return (value == null) === (getFieldValue('up_mbps') == null)
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('上下行限速需同时填写或同时留空'));
+                },
+              })]}
+            >
               <InputNumber min={1} precision={0} controls={false} placeholder="不限制" style={{ width: '100%' }} />
             </Form.Item>
           </div>
@@ -171,7 +196,11 @@ export function NodeEditorDrawer({ open, node, saving, onClose, onSave }: NodeEd
           <div className="form-grid form-grid--two">
             <Form.Item label="协议版本"><Input value="TUIC v5" disabled /></Form.Item>
             <Form.Item name="congestion_control" label="拥塞控制">
-              <Select options={[{ value: 'bbr', label: 'BBR' }, { value: 'cubic', label: 'CUBIC' }]} />
+              <Select options={[
+                { value: 'cubic', label: 'CUBIC（兼容优先）' },
+                { value: 'bbr', label: 'BBR' },
+                { value: 'new_reno', label: 'New Reno' },
+              ]} />
             </Form.Item>
             <Form.Item name="heartbeat" label="心跳间隔" rules={[{ pattern: /^[1-9]\d*(ms|s|m)$/, message: '例如 10s 或 500ms' }]}>
               <Input placeholder="10s" />

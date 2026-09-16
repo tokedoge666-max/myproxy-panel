@@ -36,6 +36,22 @@ def _boolean(config: dict[str, Any], key: str, default: bool, node_name: str) ->
     return value
 
 
+def _integer_range(
+    config: dict[str, Any],
+    key: str,
+    default: int,
+    minimum: int,
+    maximum: int,
+    node_name: str,
+) -> int:
+    value = config.get(key, default)
+    if not isinstance(value, int) or isinstance(value, bool) or not minimum <= value <= maximum:
+        raise ConfigBuildError(
+            f"{node_name}: {key} must be an integer between {minimum} and {maximum}"
+        )
+    return value
+
+
 def build_mihomo_proxies(
     nodes: Iterable[ProxyNode], settings: Settings
 ) -> list[dict[str, Any]]:
@@ -51,9 +67,18 @@ def build_mihomo_proxies(
             "name": node.name,
             "server": server,
             "port": node.listen_port,
+            "ip-version": "ipv4-prefer",
         }
         if node.protocol == "hysteria2":
             obfs = config.get("obfs") or {}
+            has_bandwidth = config.get("up_mbps") is not None or config.get("down_mbps") is not None
+            ignore_client_bandwidth = _boolean(
+                config, "ignore_client_bandwidth", not has_bandwidth, node.name
+            )
+            if has_bandwidth and ignore_client_bandwidth:
+                raise ConfigBuildError(
+                    f"{node.name}: ignore_client_bandwidth conflicts with up_mbps/down_mbps"
+                )
             proxy = {
                 **common,
                 "type": "hysteria2",
@@ -62,11 +87,12 @@ def build_mihomo_proxies(
                 "obfs-password": obfs["password"],
                 "sni": sni,
                 "skip-cert-verify": skip_verify,
+                "handshake-timeout": _integer_range(
+                    config, "handshake_timeout", 15, 1, 60, node.name
+                ),
             }
-            if config.get("up_mbps") is not None:
-                proxy["up"] = config["up_mbps"]
-            if config.get("down_mbps") is not None:
-                proxy["down"] = config["down_mbps"]
+            if ignore_client_bandwidth:
+                proxy["bbr-profile"] = "standard"
             proxies.append(proxy)
         elif node.protocol == "tuic":
             raw_uuid = config.get("uuid")
@@ -86,12 +112,15 @@ def build_mihomo_proxies(
                     "password": config["password"],
                     "sni": sni,
                     "skip-cert-verify": skip_verify,
-                    "congestion-controller": config.get("congestion_control", "bbr"),
+                    "congestion-controller": config.get("congestion_control", "cubic"),
                     "udp-relay-mode": "native",
                     "reduce-rtt": _boolean(
                         config, "zero_rtt_handshake", False, node.name
                     ),
                     "heartbeat-interval": _heartbeat_ms(config.get("heartbeat", "10s")),
+                    "request-timeout": _integer_range(
+                        config, "request_timeout", 10_000, 1_000, 60_000, node.name
+                    ),
                 }
             )
         elif node.protocol == "shadowsocks":

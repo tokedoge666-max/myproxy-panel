@@ -10,6 +10,9 @@ readonly MYPROXY_NGINX_SITE="/etc/nginx/sites-available/myproxy.conf"
 readonly MYPROXY_NGINX_LINK="/etc/nginx/sites-enabled/myproxy.conf"
 readonly MYPROXY_SUDOERS="/etc/sudoers.d/myproxy"
 readonly MYPROXY_LOGROTATE="/etc/logrotate.d/myproxy"
+readonly MYPROXY_SYSCTL="/etc/sysctl.d/90-myproxy-panel-udp.conf"
+readonly MYPROXY_SYSCTL_TEMPLATE="$MYPROXY_ROOT/deploy/sysctl/90-myproxy-panel-udp.conf.template"
+readonly MYPROXY_SYSCTL_MARKER="# Managed by MyProxy Panel. Do not edit."
 readonly MYPROXY_CERT_HOOK="/etc/letsencrypt/renewal-hooks/deploy/myproxy-cert-deploy"
 readonly MYPROXY_ACME_ROOT="/var/lib/myproxy-acme"
 readonly MYPROXY_ACCOUNT_MARKER="$MYPROXY_ROOT/.managed-service-account"
@@ -181,6 +184,54 @@ atomic_install() {
   temporary=$(mktemp "$destination_dir/.myproxy-install.XXXXXX")
   install -m "$mode" -o "$owner" -g "$group" "$source" "$temporary"
   mv -f -- "$temporary" "$destination"
+}
+
+install_udp_tuning() {
+  local minimum=16777216 current_receive current_send desired_receive desired_send
+  local rendered
+  require_command sysctl
+  [[ -f "$MYPROXY_SYSCTL_TEMPLATE" && ! -L "$MYPROXY_SYSCTL_TEMPLATE" ]] || \
+    die "UDP tuning template is missing or unsafe"
+  if [[ -e "$MYPROXY_SYSCTL" || -L "$MYPROXY_SYSCTL" ]]; then
+    [[ -f "$MYPROXY_SYSCTL" && ! -L "$MYPROXY_SYSCTL" ]] || \
+      die "refusing to replace unsafe sysctl target: $MYPROXY_SYSCTL"
+    grep -Fxq "$MYPROXY_SYSCTL_MARKER" "$MYPROXY_SYSCTL" || \
+      die "refusing to overwrite an unmanaged sysctl file: $MYPROXY_SYSCTL"
+  fi
+
+  current_receive=$(sysctl -n net.core.rmem_max)
+  current_send=$(sysctl -n net.core.wmem_max)
+  [[ "$current_receive" =~ ^[0-9]+$ && "$current_send" =~ ^[0-9]+$ ]] || \
+    die "could not read current UDP buffer limits"
+  desired_receive=$current_receive
+  desired_send=$current_send
+  ((desired_receive >= minimum)) || desired_receive=$minimum
+  ((desired_send >= minimum)) || desired_send=$minimum
+
+  rendered=$(mktemp /etc/sysctl.d/.myproxy-udp.XXXXXX)
+  if ! sed -e "s/__RMEM_MAX__/$desired_receive/g" \
+    -e "s/__WMEM_MAX__/$desired_send/g" "$MYPROXY_SYSCTL_TEMPLATE" >"$rendered"; then
+    rm -f -- "$rendered"
+    die "could not render UDP tuning configuration"
+  fi
+  if ! atomic_install "$rendered" "$MYPROXY_SYSCTL" 0644 root root; then
+    rm -f -- "$rendered"
+    die "could not install UDP tuning configuration"
+  fi
+  rm -f -- "$rendered"
+  sysctl -p "$MYPROXY_SYSCTL" >/dev/null
+}
+
+remove_udp_tuning() {
+  if [[ -e "$MYPROXY_SYSCTL" || -L "$MYPROXY_SYSCTL" ]]; then
+    if [[ ! -f "$MYPROXY_SYSCTL" || -L "$MYPROXY_SYSCTL" ]] || \
+      ! grep -Fxq "$MYPROXY_SYSCTL_MARKER" "$MYPROXY_SYSCTL"; then
+      warn "leaving unmanaged sysctl file untouched: $MYPROXY_SYSCTL"
+      return 0
+    fi
+    rm -f -- "$MYPROXY_SYSCTL"
+    log "removed persistent UDP tuning; live kernel values are left unchanged"
+  fi
 }
 
 run_as_myproxy() {

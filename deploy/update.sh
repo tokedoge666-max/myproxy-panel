@@ -10,6 +10,14 @@ acquire_deploy_lock
 acquire_certificate_lock
 assert_ubuntu_2004
 assert_install_root "$MYPROXY_ROOT"
+if ! command -v ss >/dev/null 2>&1 || ! command -v sysctl >/dev/null 2>&1; then
+  log "installing required network diagnostic tools"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y --no-install-recommends iproute2 procps
+fi
+require_command ss
+require_command sysctl
 [[ -d "$MYPROXY_ROOT/.git" ]] || die "$MYPROXY_ROOT is not a Git checkout"
 [[ -x "$MYPROXY_ROOT/backend/.venv/bin/python" ]] || die "installed backend environment is missing"
 sanitize_git_checkout
@@ -73,6 +81,25 @@ collect_app_environment() {
   done <"$MYPROXY_ROOT/config/app.env"
 }
 
+persist_singbox_version() {
+  local version=$1 next_env="$UPDATE_DIR/app.env.next"
+  awk -v version="$version" '
+    BEGIN { found = 0 }
+    /^MYPROXY_SINGBOX_VERSION=/ {
+      print "MYPROXY_SINGBOX_VERSION=" version
+      found = 1
+      next
+    }
+    { print }
+    END {
+      if (!found) print "MYPROXY_SINGBOX_VERSION=" version
+    }
+  ' "$MYPROXY_ROOT/config/app.env" >"$next_env"
+  atomic_install "$next_env" "$MYPROXY_ROOT/config/app.env" 0640 root "$MYPROXY_GROUP"
+  rm -f -- "$next_env"
+  normalize_app_env_file "$MYPROXY_ROOT/config/app.env"
+}
+
 install_integrations() {
   local server_name self_signed nginx_tmp
   server_name=$(read_app_env_value DOMAIN "$MYPROXY_ROOT/config/app.env")
@@ -90,6 +117,11 @@ install_integrations() {
   visudo -cf "$MYPROXY_SUDOERS"
   atomic_install "$MYPROXY_ROOT/deploy/logrotate/myproxy" "$MYPROXY_LOGROTATE" 0644 root root
   logrotate --debug "$MYPROXY_LOGROTATE" >/dev/null
+  if [[ -f "$MYPROXY_SYSCTL_TEMPLATE" ]]; then
+    install_udp_tuning
+  else
+    remove_udp_tuning
+  fi
 
   if [[ "$self_signed" == false ]]; then
     atomic_install "$MYPROXY_ROOT/deploy/scripts/cert-deploy-hook.sh" \
@@ -165,6 +197,10 @@ rollback_update() {
   set +e
   warn "update failed; restoring commit $OLD_COMMIT and protected state"
   systemctl stop "$MYPROXY_API_UNIT" "$MYPROXY_SINGBOX_UNIT" >/dev/null 2>&1
+  if ! git -c safe.directory="$MYPROXY_ROOT" -C "$MYPROXY_ROOT" \
+    cat-file -e "$OLD_COMMIT:deploy/sysctl/90-myproxy-panel-udp.conf.template" 2>/dev/null; then
+    remove_udp_tuning
+  fi
   git -c safe.directory="$MYPROXY_ROOT" -C "$MYPROXY_ROOT" \
     diff --name-only --diff-filter=A -z "$OLD_COMMIT"..HEAD >"$added_paths_file" 2>/dev/null
   if ! git -c safe.directory="$MYPROXY_ROOT" -C "$MYPROXY_ROOT" \
@@ -246,8 +282,16 @@ git -c safe.directory="$MYPROXY_ROOT" \
   -c protocol.ssh.allow=never -c protocol.git.allow=never \
   -c protocol.http.allow=never -c protocol.https.allow=always \
   -c http.sslVerify=true -C "$MYPROXY_ROOT" pull --ff-only
+if [[ -n "${MYPROXY_BOOTSTRAP_TARGET_COMMIT:-}" ]]; then
+  [[ "$MYPROXY_BOOTSTRAP_TARGET_COMMIT" =~ ^[0-9a-f]{40}$ ]] || \
+    die "invalid bootstrap target commit"
+  current_commit=$(git -c safe.directory="$MYPROXY_ROOT" -C "$MYPROXY_ROOT" rev-parse --verify HEAD)
+  [[ "$current_commit" == "$MYPROXY_BOOTSTRAP_TARGET_COMMIT" ]] || \
+    die "origin/main changed during bootstrap; fetch and retry"
+fi
 new_singbox_version=$(read_pinned_version SINGBOX_VERSION "$MYPROXY_ROOT/.runtime-versions")
-[[ "$new_singbox_version" == 1.13.16 ]] || die "the fetched release does not pin sing-box 1.13.16"
+[[ "$new_singbox_version" == 1.14.1 ]] || die "the fetched release does not pin sing-box 1.14.1"
+persist_singbox_version "$new_singbox_version"
 
 find "$MYPROXY_ROOT/deploy" "$MYPROXY_ROOT/scripts" -type f -name '*.sh' -exec chmod 0750 {} +
 chmod 0755 "$MYPROXY_ROOT/myproxy"

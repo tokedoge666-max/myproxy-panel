@@ -21,7 +21,7 @@ readonly TEMP_NGINX_LINK="/etc/nginx/sites-enabled/myproxy-reconfigure-acme.conf
   die "installed nginx site is missing or unsafe"
 normalize_app_env_file "$ENV_FILE"
 singbox_version=$(read_pinned_version SINGBOX_VERSION "$MYPROXY_ROOT/.runtime-versions")
-[[ "$singbox_version" == 1.13.16 ]] || die "installed release does not pin sing-box 1.13.16"
+[[ "$singbox_version" == 1.14.1 ]] || die "installed release does not pin sing-box 1.14.1"
 
 old_domain=$(read_app_env_value DOMAIN "$ENV_FILE")
 old_server_ip=$(read_app_env_value SERVER_IP "$ENV_FILE")

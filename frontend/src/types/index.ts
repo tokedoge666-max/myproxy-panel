@@ -23,6 +23,7 @@ export interface SingboxSummary {
 }
 
 export interface SystemStatus {
+  checked_at?: string;
   cpu_percent: number;
   memory_percent: number;
   memory_used_mb: number;
@@ -32,12 +33,24 @@ export interface SystemStatus {
   disk_total_gb?: number;
   uptime_seconds: number;
   singbox: SingboxSummary;
+  network?: {
+    listener_checks_available: boolean;
+    listener_family?: 'ipv4';
+    udp_buffers: {
+      receive_max_bytes: number | null;
+      send_max_bytes: number | null;
+      recommended_min_bytes: number;
+      optimized: boolean | null;
+    };
+  };
   nodes?: Array<{
     id: number | string;
     name: string;
     protocol: ProxyProtocol;
     enabled: boolean;
     status: string;
+    transport: string;
+    listeners: Partial<Record<'tcp' | 'udp', boolean | null>>;
   }>;
 }
 
@@ -51,6 +64,8 @@ export interface ProxyNode {
   listen_port: number;
   config_json: NodeConfig | string | null;
   status?: string;
+  transport?: string;
+  listeners?: Partial<Record<'tcp' | 'udp', boolean | null>>;
   created_at?: string;
   updated_at?: string;
 }

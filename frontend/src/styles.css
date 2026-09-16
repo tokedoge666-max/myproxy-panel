@@ -416,6 +416,12 @@ a:focus-visible {
   background: #26151a;
 }
 
+.status-pill--warning {
+  border: 1px solid #5a4727;
+  color: var(--amber);
+  background: #211a10;
+}
+
 .full-page-loader {
   display: flex;
   min-height: 100vh;
@@ -758,6 +764,7 @@ a:focus-visible {
 .metric-card,
 .service-hero,
 .node-status-card,
+.network-health-card,
 .system-note,
 .node-card,
 .security-strip,
@@ -996,6 +1003,43 @@ a:focus-visible {
   min-height: 250px;
   place-items: center;
   color: var(--muted-2);
+}
+
+.network-health-card .ant-card-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, .8fr);
+  align-items: center;
+  gap: 20px;
+}
+
+.network-diagnostic-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.network-diagnostic-grid > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 13px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: #0c141b;
+}
+
+.network-diagnostic-grid span {
+  color: #657987;
+  font-size: 9px;
+}
+
+.network-diagnostic-grid strong {
+  overflow: hidden;
+  margin-top: 5px;
+  color: #d9e6eb;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .system-note {
@@ -1605,6 +1649,10 @@ a:focus-visible {
     grid-template-columns: auto 1fr;
   }
 
+  .network-health-card .ant-card-body {
+    grid-template-columns: 1fr;
+  }
+
   .security-checks {
     grid-column: 2;
   }
@@ -1657,6 +1705,10 @@ a:focus-visible {
 
   .form-grid--two {
     grid-template-columns: 1fr;
+  }
+
+  .network-diagnostic-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .subscription-security .ant-card-body {
@@ -1715,6 +1767,10 @@ a:focus-visible {
 
   .node-status-row {
     grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .network-diagnostic-grid {
+    grid-template-columns: 1fr;
   }
 
   .node-status-row .status-pill {

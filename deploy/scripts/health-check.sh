@@ -7,6 +7,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 
 assert_install_root "$MYPROXY_ROOT"
 require_command curl
+require_command ss
 
 readonly ATTEMPTS=${MYPROXY_HEALTH_ATTEMPTS:-15}
 readonly DELAY_SECONDS=${MYPROXY_HEALTH_DELAY:-2}
@@ -48,4 +49,47 @@ grep -Eq '^\{[[:space:]]*"status"[[:space:]]*:[[:space:]]*"ok"[[:space:]]*\}$' \
 run_as_myproxy "$MYPROXY_ROOT/.runtime/sing-box/sing-box" check \
   -c "$MYPROXY_ROOT/config/sing-box.json" >/dev/null
 
-log "health check passed: API, sing-box and nginx are ready"
+mapfile -t expected_listeners < <(
+  run_as_myproxy "$MYPROXY_ROOT/backend/.venv/bin/python" \
+    - "$MYPROXY_ROOT/config/sing-box.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    config = json.load(source)
+
+for inbound in config.get("inbounds", []):
+    inbound_type = inbound.get("type")
+    port = inbound.get("listen_port")
+    if not isinstance(port, int):
+        continue
+    if inbound_type in {"hysteria2", "tuic"}:
+        print(f"udp:{port}")
+    elif inbound_type == "shadowsocks":
+        network = inbound.get("network")
+        if network in {None, "tcp"}:
+            print(f"tcp:{port}")
+        if network in {None, "udp"}:
+            print(f"udp:{port}")
+PY
+)
+
+for listener in "${expected_listeners[@]}"; do
+  transport=${listener%%:*}
+  port=${listener##*:}
+  [[ "$transport" == tcp || "$transport" == udp ]] || die "invalid listener transport"
+  [[ "$port" =~ ^[1-9][0-9]*$ && "$port" -le 65535 ]] || die "invalid listener port"
+  listener_ready=false
+  for ((attempt = 1; attempt <= ATTEMPTS; attempt++)); do
+    if [[ "$transport" == tcp ]]; then
+      [[ -n "$(ss -H -4 -ltn "sport = :$port")" ]] && listener_ready=true
+    else
+      [[ -n "$(ss -H -4 -lun "sport = :$port")" ]] && listener_ready=true
+    fi
+    [[ "$listener_ready" == true ]] && break
+    ((attempt == ATTEMPTS)) || sleep "$DELAY_SECONDS"
+  done
+  [[ "$listener_ready" == true ]] || die "expected $transport listener is missing on port $port"
+done
+
+log "health check passed: API, sing-box, listeners and nginx are ready"

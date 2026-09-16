@@ -31,7 +31,7 @@ class AppSettings:
     systemctl_path: Path = Path("/bin/systemctl")
     sudo_path: Path = Path("/usr/bin/sudo")
     use_sudo: bool = True
-    singbox_version: str = "1.13.16"
+    singbox_version: str = "1.14.1"
     backup_limit: int = 20
     restart_health_timeout_seconds: float = 4.0
     restart_stability_seconds: float = 1.5
@@ -88,7 +88,7 @@ class AppSettings:
             systemctl_path=Path(os.getenv("MYPROXY_SYSTEMCTL", "/bin/systemctl")),
             sudo_path=Path(os.getenv("MYPROXY_SUDO", "/usr/bin/sudo")),
             use_sudo=_env_bool("MYPROXY_USE_SUDO", environment == "production"),
-            singbox_version=os.getenv("MYPROXY_SINGBOX_VERSION", "1.13.16"),
+            singbox_version=os.getenv("MYPROXY_SINGBOX_VERSION", "1.14.1"),
             backup_limit=max(1, int(os.getenv("MYPROXY_BACKUP_LIMIT", "20"))),
             allowed_hosts=allowed_hosts,
         )

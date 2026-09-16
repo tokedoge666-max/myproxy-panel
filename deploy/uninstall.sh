@@ -89,6 +89,8 @@ fi
 uninstall_removal_started=true
 systemctl disable "$MYPROXY_API_UNIT" "$MYPROXY_SINGBOX_UNIT" >/dev/null 2>&1 || true
 
+remove_udp_tuning
+
 rm -f -- "/etc/systemd/system/$MYPROXY_API_UNIT"
 rm -f -- "/etc/systemd/system/$MYPROXY_SINGBOX_UNIT"
 rm -f -- "$MYPROXY_SUDOERS"

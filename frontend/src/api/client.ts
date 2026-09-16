@@ -14,7 +14,7 @@ import type {
 } from '../types';
 
 let responseCsrfToken = '';
-const APPLY_TIMEOUT_MS = 90_000;
+const APPLY_TIMEOUT_MS = 150_000;
 
 function readCookie(name: string): string {
   const prefix = name + '=';

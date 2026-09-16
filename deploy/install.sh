@@ -95,7 +95,7 @@ fi
   die "invalid server name"
 
 singbox_version=$(read_pinned_version SINGBOX_VERSION "$SOURCE_ROOT/.runtime-versions")
-[[ "$singbox_version" == 1.13.16 ]] || die "this deployment requires sing-box 1.13.16"
+[[ "$singbox_version" == 1.14.1 ]] || die "this deployment requires sing-box 1.14.1"
 
 if [[ -e "$MYPROXY_ROOT" ]]; then
   die "$MYPROXY_ROOT already exists; use deploy/update.sh for an installed system"
@@ -105,11 +105,15 @@ credentials_file=''
 install_stage=''
 service_account_created=false
 service_group_created=false
+udp_tuning_installed=false
 on_install_exit() {
   local exit_code=$?
   local retain_managed_account=false
   trap - EXIT
   [[ -z "$credentials_file" ]] || rm -f -- "$credentials_file"
+  if [[ "$udp_tuning_installed" == true ]]; then
+    remove_udp_tuning || warn "could not fully revert UDP tuning after install failure"
+  fi
   if [[ -d "$MYPROXY_ROOT" && ! -L "$MYPROXY_ROOT" ]]; then
     retain_managed_account=true
   fi
@@ -137,7 +141,7 @@ log "installing required Ubuntu packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
-  ca-certificates certbot curl git logrotate nginx openssl sudo tar xz-utils
+  ca-certificates certbot curl git iproute2 logrotate nginx openssl procps sudo tar xz-utils
 
 if getent passwd "$MYPROXY_USER" >/dev/null || getent group "$MYPROXY_GROUP" >/dev/null; then
   die "a pre-existing myproxy user or group was found; refusing to adopt or later delete it"
@@ -189,14 +193,16 @@ chown_tree_nofollow root root "$install_stage" || die "could not seal installed 
 for required_source in \
   .runtime-versions backend/pyproject.toml backend/uv.lock \
   frontend/package.json frontend/package-lock.json \
-  deploy/update.sh deploy/uninstall.sh deploy/reconfigure.sh \
+  deploy/update.sh deploy/bootstrap-update.sh deploy/uninstall.sh deploy/reconfigure.sh \
   deploy/lib/common.sh deploy/scripts/download-runtime.sh deploy/scripts/build-project.sh \
   deploy/scripts/provision-tls.sh deploy/scripts/health-check.sh deploy/scripts/cert-deploy-hook.sh \
   deploy/scripts/backup-state.sh \
   deploy/checksums/runtime-sha256.txt \
   deploy/systemd/myproxy-api.service deploy/systemd/myproxy-singbox.service \
   deploy/nginx/myproxy.conf.template deploy/nginx/myproxy-http.conf.template \
-  deploy/sudoers/myproxy deploy/logrotate/myproxy config/app.env.template myproxy; do
+  deploy/sudoers/myproxy deploy/logrotate/myproxy \
+  deploy/sysctl/90-myproxy-panel-udp.conf.template \
+  config/app.env.template myproxy; do
   [[ -f "$install_stage/$required_source" && ! -L "$install_stage/$required_source" ]] || \
     die "required source must be a regular file: $required_source"
 done
@@ -315,6 +321,8 @@ atomic_install "$MYPROXY_ROOT/deploy/sudoers/myproxy" "$MYPROXY_SUDOERS" 0440 ro
 visudo -cf "$MYPROXY_SUDOERS"
 atomic_install "$MYPROXY_ROOT/deploy/logrotate/myproxy" "$MYPROXY_LOGROTATE" 0644 root root
 logrotate --debug "$MYPROXY_LOGROTATE" >/dev/null
+udp_tuning_installed=true
+install_udp_tuning
 
 nginx_tmp=$(mktemp /etc/nginx/sites-available/.myproxy.XXXXXX)
 sed "s|__SERVER_NAME__|$(escape_sed_replacement "$server_name")|g" \

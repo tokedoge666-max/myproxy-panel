@@ -50,20 +50,25 @@ def default_node_config(protocol: str) -> dict[str, Any]:
             "user": "admin",
             "password": generate_password(),
             "obfs": {"type": "salamander", "password": generate_password()},
+            "handshake_timeout": 15,
         }
     if protocol == "tuic":
         return {
             "uuid": generate_uuid4(),
             "password": generate_password(),
-            "congestion_control": "bbr",
+            "congestion_control": "cubic",
+            "auth_timeout": "3s",
             "zero_rtt_handshake": False,
             "heartbeat": "10s",
+            "request_timeout": 10_000,
         }
     if protocol == "shadowsocks":
         return {
             "method": "2022-blake3-aes-128-gcm",
             "password": generate_ss2022_key(),
             "udp": True,
+            "tcp_keep_alive": "2m",
+            "tcp_keep_alive_interval": "30s",
         }
     raise ValueError(f"unsupported protocol: {protocol}")
 

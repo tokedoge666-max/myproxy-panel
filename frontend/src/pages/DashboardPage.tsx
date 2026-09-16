@@ -14,7 +14,7 @@ import { LogsDrawer } from '../components/LogsDrawer';
 import { PageHeader } from '../components/PageHeader';
 import { StatusPill } from '../components/StatusPill';
 import type { ProxyNode, SystemStatus } from '../types';
-import { formatProtocol, formatUptime, isRunning } from '../utils/format';
+import { formatBytes, formatProtocol, formatUptime, isRunning } from '../utils/format';
 
 interface MetricCardProps {
   label: string;
@@ -46,6 +46,16 @@ function MetricCard({ label, value, detail, percent, icon, tone = 'green' }: Met
   );
 }
 
+function formatListenerState(node: ProxyNode): string {
+  if (!node.listeners) return '监听状态未知';
+  return Object.entries(node.listeners)
+    .map(([transport, listening]) => {
+      const label = transport.toUpperCase();
+      return listening === null ? `${label} 未检测` : `${label} ${listening ? '已监听' : '未监听'}`;
+    })
+    .join(' · ');
+}
+
 export function DashboardPage() {
   const { message, modal } = App.useApp();
   const [status, setStatus] = useState<SystemStatus | null>(null);
@@ -64,13 +74,18 @@ export function DashboardPage() {
     try {
       const [nextStatus, nextNodes] = await Promise.all([systemApi.status(), nodeApi.list()]);
       const runtimeStatus = new Map(
-        (nextStatus.nodes ?? []).map((node) => [String(node.id), node.status]),
+        (nextStatus.nodes ?? []).map((node) => [String(node.id), node]),
       );
       setStatus(nextStatus);
-      setNodes(nextNodes.map((node) => ({
-        ...node,
-        status: runtimeStatus.get(String(node.id)) ?? (node.enabled ? 'unknown' : 'disabled'),
-      })));
+      setNodes(nextNodes.map((node) => {
+        const runtime = runtimeStatus.get(String(node.id));
+        return {
+          ...node,
+          status: runtime?.status ?? (node.enabled ? 'unknown' : 'disabled'),
+          transport: runtime?.transport,
+          listeners: runtime?.listeners,
+        };
+      }));
       setError('');
       if (manual) message.success('状态已刷新');
     } catch (requestError) {
@@ -108,7 +123,24 @@ export function DashboardPage() {
   };
 
   const enabledNodes = useMemo(() => nodes.filter((node) => node.enabled), [nodes]);
+  const firewallPorts = useMemo(() => enabledNodes.flatMap((node) => {
+    if (node.protocol !== 'shadowsocks') return [`UDP ${node.listen_port}`];
+    const config = node.config_json && typeof node.config_json === 'object' ? node.config_json : {};
+    return config.udp === false
+      ? [`TCP ${node.listen_port}`]
+      : [`TCP ${node.listen_port}`, `UDP ${node.listen_port}`];
+  }).join('、'), [enabledNodes]);
   const singboxRunning = isRunning(status?.singbox?.status);
+  const hasEnabledNodes = enabledNodes.length > 0;
+  const listenersHealthy = enabledNodes.every((node) => isRunning(node.status));
+  const listenerChecksHealthy = !hasEnabledNodes
+    || (status?.network?.listener_checks_available === true && listenersHealthy);
+  const udpBuffers = status?.network?.udp_buffers;
+  const udpBuffersHealthy = udpBuffers?.optimized === true;
+  const controlHealthy = !error
+    && singboxRunning
+    && listenerChecksHealthy
+    && udpBuffers?.optimized !== false;
 
   return (
     <div className="page-stack">
@@ -174,12 +206,13 @@ export function DashboardPage() {
                     <div className="node-protocol-mark">{node.protocol === 'hysteria2' ? 'H2' : node.protocol === 'tuic' ? 'T5' : 'SS'}</div>
                     <div className="node-status-copy">
                       <strong>{node.name}</strong>
-                      <span>{formatProtocol(node.protocol)} · {node.listen_port}/{node.protocol === 'shadowsocks' ? 'TCP+UDP' : 'UDP'}</span>
+                      <span>{formatProtocol(node.protocol)} · {node.listen_port} · {formatListenerState(node)}</span>
                     </div>
                     <StatusPill
                       status={node.enabled ? node.status : 'disabled'}
                       activeLabel="运行中"
                       inactiveLabel={node.enabled ? '状态异常' : '已停用'}
+                      warningLabel="监听异常"
                     />
                   </div>
                 )) : (
@@ -191,9 +224,47 @@ export function DashboardPage() {
         </Row>
       </section>
 
+      <section className="section-block">
+        <div className="section-heading">
+          <div><span>CONNECTION HEALTH</span><h2>转发稳定性</h2></div>
+          <span className="section-meta">本机只读检测</span>
+        </div>
+        <Card className="network-health-card" bordered={false}>
+          <div className="network-diagnostic-grid">
+            <div>
+              <span>端口监听</span>
+              <strong>{!hasEnabledNodes ? '暂无启用节点' : status?.network?.listener_checks_available ? (listenersHealthy ? '全部正常' : '存在异常') : '无法检测'}</strong>
+            </div>
+            <div>
+              <span>UDP 接收缓冲上限</span>
+              <strong>{formatBytes(udpBuffers?.receive_max_bytes ?? undefined)}</strong>
+            </div>
+            <div>
+              <span>UDP 发送缓冲上限</span>
+              <strong>{formatBytes(udpBuffers?.send_max_bytes ?? undefined)}</strong>
+            </div>
+            <div>
+              <span>建议最低值</span>
+              <strong>{formatBytes(udpBuffers?.recommended_min_bytes)}</strong>
+            </div>
+          </div>
+          <Alert
+            type={!hasEnabledNodes ? 'info' : !udpBuffersHealthy || !listenerChecksHealthy ? 'warning' : 'success'}
+            showIcon
+            message={!hasEnabledNodes ? '当前没有启用的代理节点' : udpBuffers?.optimized === false ? 'UDP 缓冲偏低，QUIC 高流量时可能丢包' : udpBuffers?.optimized == null ? '无法读取 UDP 缓冲状态' : listenerChecksHealthy ? '本机数据面检查通过' : '有节点未检测到预期监听端口'}
+            description={(
+              <span>
+                这里验证 sing-box 进程、本机 IPv4 端口与 UDP 缓冲；云安全组和客户端到服务器的公网链路仍需在 Clash Verge Rev 中实测。
+                {firewallPorts ? <><br />当前需在 UFW 与云安全组放行：{firewallPorts}。</> : null}
+              </span>
+            )}
+          />
+        </Card>
+      </section>
+
       <Card className="system-note" bordered={false}>
-        <div><span className="secure-dot" /><div><strong>控制面状态正常</strong><p>API 通过本机回环地址提供服务，公网请求由 Nginx 安全转发。</p></div></div>
-        <Tooltip title="详细状态仅对已登录管理员可见"><span>PRIVATE ENDPOINT</span></Tooltip>
+        <div><span className="secure-dot" /><div><strong>{controlHealthy ? '控制面与数据面状态正常' : '检测到需要处理的运行项'}</strong><p>{controlHealthy ? 'API 由 Nginx 安全转发，所有已启用节点均检测到预期监听。' : '请先查看上方 UDP 缓冲、端口状态与 sing-box 日志，再检查防火墙和云安全组。'}</p></div></div>
+        <Tooltip title="详细状态仅对已登录管理员可见"><span>{controlHealthy ? 'PRIVATE ENDPOINT' : 'ATTENTION'}</span></Tooltip>
       </Card>
 
       <LogsDrawer open={logsOpen} onClose={() => setLogsOpen(false)} />

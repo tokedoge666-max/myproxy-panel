@@ -14,7 +14,7 @@ class ConfigBuildError(ValueError):
     pass
 
 
-_HEARTBEAT_RE = re.compile(r"^[1-9][0-9]*(?:ms|s|m)$")
+_DURATION_RE = re.compile(r"^[1-9][0-9]*(?:ms|s|m|h)$")
 
 
 def _required_string(config: dict[str, Any], key: str, node_name: str) -> str:
@@ -28,6 +28,13 @@ def _boolean(config: dict[str, Any], key: str, default: bool, node_name: str) ->
     value = config.get(key, default)
     if not isinstance(value, bool):
         raise ConfigBuildError(f"{node_name}: {key} must be a boolean")
+    return value
+
+
+def _duration(config: dict[str, Any], key: str, default: str, node_name: str) -> str:
+    value = config.get(key, default)
+    if not isinstance(value, str) or not _DURATION_RE.fullmatch(value):
+        raise ConfigBuildError(f"{node_name}: invalid {key} duration")
     return value
 
 
@@ -70,11 +77,12 @@ def _hysteria2_inbound(node: ProxyNode, settings: Settings) -> dict[str, Any]:
     inbound: dict[str, Any] = {
         "type": "hysteria2",
         "tag": _tag(node),
-        "listen": "::",
+        "listen": "0.0.0.0",
         "listen_port": node.listen_port,
         "obfs": {"type": "salamander", "password": obfs_password},
         "users": [{"name": user, "password": password}],
         "tls": _tls_config(settings),
+        "udp_timeout": _duration(config, "udp_timeout", "5m", node.name),
     }
     for key in ("up_mbps", "down_mbps"):
         value = config.get(key)
@@ -82,10 +90,17 @@ def _hysteria2_inbound(node: ProxyNode, settings: Settings) -> dict[str, Any]:
             if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
                 raise ConfigBuildError(f"{node.name}: {key} must be a positive integer")
             inbound[key] = value
-    if "ignore_client_bandwidth" in config:
-        inbound["ignore_client_bandwidth"] = _boolean(
-            config, "ignore_client_bandwidth", False, node.name
+    has_bandwidth = "up_mbps" in inbound or "down_mbps" in inbound
+    ignore_client_bandwidth = _boolean(
+        config, "ignore_client_bandwidth", not has_bandwidth, node.name
+    )
+    if has_bandwidth and ignore_client_bandwidth:
+        raise ConfigBuildError(
+            f"{node.name}: ignore_client_bandwidth conflicts with up_mbps/down_mbps"
         )
+    inbound["ignore_client_bandwidth"] = ignore_client_bandwidth
+    if ignore_client_bandwidth:
+        inbound["bbr_profile"] = "standard"
     return inbound
 
 
@@ -101,11 +116,11 @@ def _tuic_inbound(node: ProxyNode, settings: Settings) -> dict[str, Any]:
     password = _required_string(config, "password", node.name)
     if len(password) < 16:
         raise ConfigBuildError(f"{node.name}: TUIC password is too short")
-    congestion = config.get("congestion_control", "bbr")
+    congestion = config.get("congestion_control", "cubic")
     if congestion not in {"bbr", "cubic", "new_reno"}:
         raise ConfigBuildError(f"{node.name}: unsupported congestion control")
     heartbeat = config.get("heartbeat", "10s")
-    if not isinstance(heartbeat, str) or not _HEARTBEAT_RE.fullmatch(heartbeat):
+    if not isinstance(heartbeat, str) or not _DURATION_RE.fullmatch(heartbeat):
         raise ConfigBuildError(f"{node.name}: invalid heartbeat duration")
     user = config.get("user", "admin")
     if not isinstance(user, str) or not user:
@@ -113,13 +128,15 @@ def _tuic_inbound(node: ProxyNode, settings: Settings) -> dict[str, Any]:
     return {
         "type": "tuic",
         "tag": _tag(node),
-        "listen": "::",
+        "listen": "0.0.0.0",
         "listen_port": node.listen_port,
         "users": [{"name": user, "uuid": str(parsed_uuid), "password": password}],
         "congestion_control": congestion,
+        "auth_timeout": _duration(config, "auth_timeout", "3s", node.name),
         "zero_rtt_handshake": _boolean(config, "zero_rtt_handshake", False, node.name),
         "heartbeat": heartbeat,
         "tls": _tls_config(settings),
+        "udp_timeout": _duration(config, "udp_timeout", "5m", node.name),
     }
 
 
@@ -139,10 +156,15 @@ def _shadowsocks_inbound(node: ProxyNode) -> dict[str, Any]:
     inbound = {
         "type": "shadowsocks",
         "tag": _tag(node),
-        "listen": "::",
+        "listen": "0.0.0.0",
         "listen_port": node.listen_port,
         "method": method,
         "password": password,
+        "udp_timeout": _duration(config, "udp_timeout", "5m", node.name),
+        "tcp_keep_alive": _duration(config, "tcp_keep_alive", "2m", node.name),
+        "tcp_keep_alive_interval": _duration(
+            config, "tcp_keep_alive_interval", "30s", node.name
+        ),
     }
     if not _boolean(config, "udp", True, node.name):
         inbound["network"] = "tcp"

@@ -24,6 +24,7 @@ from app.core.logging import redact_text
 from app.core.node_names import normalize_node_name
 from app.models import ProxyNode, Settings
 from app.services.audit import record_audit
+from app.services.network_health import ipv4_listening_ports, missing_listeners
 from app.services.singbox_config import ConfigBuildError, build_singbox_config
 
 
@@ -57,6 +58,18 @@ class ApplyFailed(SingBoxError):
 Runner = Callable[[list[str]], CommandResult]
 
 
+def _command_timeout(command: list[str]) -> float:
+    if "is-active" in command:
+        return 3.0
+    if "version" in command:
+        return 5.0
+    if "restart" in command:
+        return 45.0
+    if "check" in command:
+        return 20.0
+    return 30.0
+
+
 def _default_runner(command: list[str]) -> CommandResult:
     try:
         completed = subprocess.run(
@@ -65,7 +78,7 @@ def _default_runner(command: list[str]) -> CommandResult:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=30,
+            timeout=_command_timeout(command),
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -90,46 +103,51 @@ class SingBoxService:
 
     @contextmanager
     def _operation_lock(self, timeout_seconds: float = 15.0) -> Iterator[None]:
-        self.settings.run_dir.mkdir(parents=True, exist_ok=True)
-        lock_path = self.settings.run_dir / "sing-box.apply.lock"
-        with self._apply_lock, lock_path.open("a+b") as lock_file:
-            if lock_file.tell() == 0:
-                lock_file.write(b"\0")
-                lock_file.flush()
-            if os.name != "nt":
-                lock_path.chmod(0o600)
-            deadline = time.monotonic() + timeout_seconds
-            locked = False
-            while not locked:
+        deadline = time.monotonic() + timeout_seconds
+        if not self._apply_lock.acquire(timeout=timeout_seconds):
+            raise ApplyFailed("another sing-box configuration operation is in progress")
+        try:
+            self.settings.run_dir.mkdir(parents=True, exist_ok=True)
+            lock_path = self.settings.run_dir / "sing-box.apply.lock"
+            with lock_path.open("a+b") as lock_file:
+                if lock_file.tell() == 0:
+                    lock_file.write(b"\0")
+                    lock_file.flush()
+                if os.name != "nt":
+                    lock_path.chmod(0o600)
+                locked = False
+                while not locked:
+                    try:
+                        lock_file.seek(0)
+                        if os.name == "nt":
+                            import msvcrt
+
+                            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                        else:
+                            import fcntl
+
+                            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        locked = True
+                    except OSError as exc:
+                        if time.monotonic() >= deadline:
+                            raise ApplyFailed(
+                                "another sing-box configuration operation is in progress"
+                            ) from exc
+                        time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
                 try:
+                    yield
+                finally:
                     lock_file.seek(0)
                     if os.name == "nt":
                         import msvcrt
 
-                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
                     else:
                         import fcntl
 
-                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    locked = True
-                except OSError as exc:
-                    if time.monotonic() >= deadline:
-                        raise ApplyFailed(
-                            "another sing-box configuration operation is in progress"
-                        ) from exc
-                    time.sleep(0.1)
-            try:
-                yield
-            finally:
-                lock_file.seek(0)
-                if os.name == "nt":
-                    import msvcrt
-
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        finally:
+            self._apply_lock.release()
 
     def version(self) -> str:
         result = self._run([str(self.settings.singbox_binary), "version"])
@@ -147,7 +165,22 @@ class SingBoxService:
         )
         return "running" if result.returncode == 0 and result.stdout.strip() == "active" else "stopped"
 
-    def restart(self) -> None:
+    def _missing_active_listeners(self) -> set[tuple[str, int]] | None:
+        path = self.settings.singbox_config
+        if not path.is_file() or path.is_symlink():
+            return None
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, TypeError, ValueError):
+            return {("config", 0)}
+        if not isinstance(config, dict):
+            return {("config", 0)}
+        listening = ipv4_listening_ports()
+        if listening is None:
+            return None
+        return missing_listeners(config, listening)
+
+    def _restart_locked(self) -> None:
         command = [
             str(self.settings.systemctl_path),
             "restart",
@@ -163,7 +196,8 @@ class SingBoxService:
         active_since: float | None = None
         while True:
             now = time.monotonic()
-            if self.status() == "running":
+            missing = self._missing_active_listeners()
+            if self.status() == "running" and not missing:
                 active_since = now if active_since is None else active_since
                 if now - active_since >= self.settings.restart_stability_seconds:
                     return
@@ -173,7 +207,11 @@ class SingBoxService:
             if remaining <= 0:
                 break
             time.sleep(min(self.settings.restart_poll_interval_seconds, remaining))
-        raise ApplyFailed("sing-box did not remain active after restart")
+        raise ApplyFailed("sing-box did not remain active with all IPv4 listeners after restart")
+
+    def restart(self) -> None:
+        with self._operation_lock():
+            self._restart_locked()
 
     def render(self, db: Session) -> dict[str, Any]:
         db.flush()
@@ -534,7 +572,7 @@ class SingBoxService:
         except OSError as exc:
             errors.append(f"config restore failed: {exc}")
         try:
-            self.restart()
+            self._restart_locked()
         except SingBoxError as exc:
             errors.append(f"rollback restart failed: {exc}")
         return "; ".join(errors) or None
@@ -558,7 +596,7 @@ class SingBoxService:
         had_previous_config = self.settings.singbox_config.exists()
         self._install_staging()
         try:
-            self.restart()
+            self._restart_locked()
         except SingBoxError as exc:
             db.rollback()
             rollback_error = self._restore_config_after_failure(
@@ -667,7 +705,7 @@ class SingBoxService:
                 self.validate_file(self.settings.staging_config)
                 self._install_staging()
                 installed = True
-                self.restart()
+                self._restart_locked()
                 record_audit(db, "Restore Backup", {"source": selected})
                 db.commit()
             except (
@@ -686,7 +724,7 @@ class SingBoxService:
                     elif not had_current_config:
                         self.settings.singbox_config.unlink(missing_ok=True)
                     try:
-                        self.restart()
+                        self._restart_locked()
                     except SingBoxError as rollback_exc:
                         rollback_error = str(rollback_exc)
                 try:

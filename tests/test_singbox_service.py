@@ -189,6 +189,22 @@ def test_restart_uses_exact_noninteractive_sudo_contract(tmp_path: Path) -> None
     database.dispose()
 
 
+def test_restart_requires_expected_ipv4_listener(tmp_path: Path, monkeypatch) -> None:
+    settings, database, _runner, service = _service_fixture(tmp_path)
+    settings.singbox_config.write_text(
+        '{"inbounds":[{"type":"hysteria2","listen_port":8443}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "app.services.singbox_service.ipv4_listening_ports",
+        lambda: {"tcp": set(), "udp": set()},
+    )
+
+    with pytest.raises(ApplyFailed, match="IPv4 listeners"):
+        service.restart()
+    database.dispose()
+
+
 def test_log_tail_is_bounded_and_redacted(tmp_path: Path) -> None:
     settings, database, _runner, service = _service_fixture(tmp_path)
     (settings.log_dir / "sing-box.log").write_text(

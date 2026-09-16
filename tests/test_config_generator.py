@@ -48,7 +48,7 @@ def _nodes() -> list[ProxyNode]:
     ]
 
 
-def test_singbox_113_config_has_only_supported_fields() -> None:
+def test_singbox_114_config_has_conservative_stability_fields() -> None:
     config = build_singbox_config(_nodes(), _settings(), log_path="/opt/myproxy/logs/sing-box.log")
     assert [item["type"] for item in config["inbounds"]] == [
         "hysteria2",
@@ -56,14 +56,22 @@ def test_singbox_113_config_has_only_supported_fields() -> None:
         "shadowsocks",
     ]
     hy2, tuic, shadowsocks = config["inbounds"]
+    assert all(inbound["listen"] == "0.0.0.0" for inbound in config["inbounds"])
     assert hy2["obfs"]["type"] == "salamander"
     assert hy2["tls"]["enabled"] is True
+    assert hy2["udp_timeout"] == "5m"
+    assert hy2["ignore_client_bandwidth"] is True
+    assert hy2["bbr_profile"] == "standard"
     assert tuic["zero_rtt_handshake"] is False
     assert tuic["heartbeat"] == "10s"
+    assert tuic["auth_timeout"] == "3s"
+    assert tuic["udp_timeout"] == "5m"
     assert "network" not in shadowsocks
     assert shadowsocks["method"] == "2022-blake3-aes-128-gcm"
+    assert shadowsocks["tcp_keep_alive"] == "2m"
+    assert shadowsocks["tcp_keep_alive_interval"] == "30s"
     serialized = json.dumps(config)
-    for unsupported in ("gecko", "bbr_profile", "realm", "min_packet_size", "max_packet_size"):
+    for unsupported in ("gecko", "realm", "min_packet_size", "max_packet_size"):
         assert unsupported not in serialized
 
 
@@ -105,6 +113,20 @@ def test_ss_udp_false_restricts_inbound_to_tcp() -> None:
     config = build_singbox_config(nodes, _settings())
     ss = next(inbound for inbound in config["inbounds"] if inbound["type"] == "shadowsocks")
     assert ss["network"] == "tcp"
+
+
+def test_hysteria_bandwidth_limits_disable_bbr_mode() -> None:
+    nodes = _nodes()
+    nodes[0].config_json["up_mbps"] = 100
+    nodes[0].config_json["ignore_client_bandwidth"] = True
+    with pytest.raises(ConfigBuildError, match="conflicts"):
+        build_singbox_config(nodes, _settings())
+
+    nodes[0].config_json["ignore_client_bandwidth"] = False
+    inbound = build_singbox_config(nodes, _settings())["inbounds"][0]
+    assert inbound["up_mbps"] == 100
+    assert inbound["ignore_client_bandwidth"] is False
+    assert "bbr_profile" not in inbound
 
 
 @pytest.mark.parametrize(

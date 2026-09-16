@@ -10,7 +10,8 @@ MyProxy Panel 是面向单台个人服务器的轻量代理节点控制面板。
 - Hysteria2、TUIC、Shadowsocks 2022 节点管理、启停和安全凭证重生
 - sing-box 配置生成、staging 校验、原子替换、最多 20 份备份和失败自动回滚
 - Mihomo 完整订阅与 Proxy Provider 订阅
-- CPU、内存、磁盘、运行时间、sing-box 状态与脱敏日志
+- CPU、内存、磁盘、运行时间、逐节点 TCP/UDP 监听、UDP 缓冲与脱敏日志
+- 面向 QUIC 的 16 MiB 系统缓冲、保守拥塞参数、客户端握手容错与部署健康检查
 - 深色、响应式 React 管理界面
 - 项目内 CLI，以及安装、更新、备份、恢复和卸载脚本
 - 项目本地 Python、Node.js 和 sing-box Runtime，不替换 Ubuntu 系统 Python
@@ -45,7 +46,7 @@ FastAPI 是控制面，sing-box 是数据面。项目不会自行实现任何代
 
 项目锁定的 Runtime 版本见 `.runtime-versions`。安装器只把应用 Runtime 放在 `/opt/myproxy/.runtime`；系统级仅使用 Nginx、systemd、证书和必要下载工具。
 
-当前锁定的代理核心是官方 [sing-box v1.13.16 Stable](https://github.com/SagerNet/sing-box/releases/tag/v1.13.16)。项目不会使用 1.14 预发布版，也不会把仅属于 1.14 的配置字段写入稳定版配置。
+当前锁定的代理核心是官方 [sing-box v1.14.1 Stable](https://github.com/SagerNet/sing-box/releases/tag/v1.14.1)。下载器同时核对仓库固定 SHA256 与 GitHub Release 元数据，不跟随未经验证的 `latest` 地址。
 
 ## 端口与安全组
 
@@ -71,7 +72,7 @@ FastAPI 是控制面，sing-box 是数据面。项目不会自行实现任何代
 先将域名 A 记录解析到服务器 IPv4，然后执行：
 
 ```bash
-git clone https://github.com/YOUR_ORG/YOUR_REPO.git myproxy-panel
+git clone https://github.com/tokedoge666-max/myproxy-panel.git myproxy-panel
 cd myproxy-panel
 sudo env \
   SERVER_IP="203.0.113.10" \
@@ -83,7 +84,7 @@ sudo env \
 ### 暂无域名的自签名模式
 
 ```bash
-git clone https://github.com/YOUR_ORG/YOUR_REPO.git myproxy-panel
+git clone https://github.com/tokedoge666-max/myproxy-panel.git myproxy-panel
 cd myproxy-panel
 sudo env \
   SERVER_IP="203.0.113.10" \
@@ -137,7 +138,7 @@ sudo env \
 
 ### Dashboard
 
-查看 CPU、内存、磁盘、运行时间和 sing-box/节点状态。可重启 sing-box 或打开最近日志。
+查看 CPU、内存、磁盘、运行时间、sing-box 状态、每个节点的实际监听端口和 UDP 缓冲上限。面板只验证服务器本机状态；公网防火墙、云安全组和客户端链路仍需在 Mihomo 客户端实测。
 
 ### Nodes
 
@@ -218,6 +219,16 @@ systemctl reload nginx
 sing-box 的应用日志也可从面板或 `/opt/myproxy/logs/sing-box.log` 查看。API 与订阅访问日志会过滤密码、Token、Authorization、Cookie、私钥、完整 UUID 和订阅 URL；Nginx 的 `/sub/` 路径关闭 access log。
 
 ## 更新
+
+从 sing-box 1.13.16 版本首次升级到本版本时，旧更新器会拒绝新的 Runtime pin。只需执行一次引导更新：
+
+```bash
+cd /opt/myproxy
+sudo git -c safe.directory=/opt/myproxy -C /opt/myproxy fetch origin main
+sudo bash -o pipefail -c 'git -c safe.directory=/opt/myproxy -C /opt/myproxy show origin/main:deploy/bootstrap-update.sh | bash'
+```
+
+这条命令会以 root 执行 `origin/main` 中的引导脚本，因此仅用于你已确认 origin 为 `https://github.com/tokedoge666-max/myproxy-panel.git` 的官方公开仓库。引导脚本会把事务更新绑定到本次获取的不可变提交，再执行备份、构建、检查和失败回滚。通过自建只读镜像安装的旧版本应先人工审计并同步这段桥接逻辑。完成这次升级后，后续继续使用普通更新命令：
 
 ```bash
 cd /opt/myproxy
@@ -326,11 +337,13 @@ make check
 
 ### 节点无法连接
 
-1. 在面板确认节点已启用且 sing-box 为 Running。
+1. 在 Dashboard 确认 sing-box 正常，节点显示对应 TCP/UDP 端口“已监听”。
 2. 执行 `./myproxy check`。
 3. 检查对应 UDP/TCP 端口是否同时在 UFW 和供应商安全组开放。
 4. 检查客户端订阅是否已更新；Token 轮换后必须使用新地址。
 5. TLS 模式下确认域名、SNI 和证书仍有效。
+
+若面板提示 UDP 缓冲低于 16 MiB，重新执行 `sudo bash deploy/update.sh` 以安装持久化的 QUIC 缓冲配置；该上限不会在启动时预占 16 MiB 内存。
 
 ### 配置应用失败
 

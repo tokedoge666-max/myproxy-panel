@@ -1,0 +1,4 @@
+# Managed by MyProxy Panel. Do not edit.
+# Hysteria2/TUIC use userspace QUIC. These are maximums, not preallocated memory.
+net.core.rmem_max = __RMEM_MAX__
+net.core.wmem_max = __WMEM_MAX__

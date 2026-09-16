@@ -47,9 +47,14 @@ def test_mihomo_and_provider_generation(client_bundle) -> None:
         }
     ]
     tuic = next(proxy for proxy in mihomo["proxies"] if proxy["type"] == "tuic")
+    hy2 = next(proxy for proxy in mihomo["proxies"] if proxy["type"] == "hysteria2")
+    assert all(proxy["ip-version"] == "ipv4-prefer" for proxy in mihomo["proxies"])
+    assert hy2["handshake-timeout"] == 15
+    assert hy2["bbr-profile"] == "standard"
     assert "uuid" in tuic and "password" in tuic and "token" not in tuic
     assert tuic["reduce-rtt"] is False
     assert tuic["heartbeat-interval"] == 10_000
+    assert tuic["request-timeout"] == 10_000
     assert list(provider) == ["proxies"]
     assert provider["proxies"] == mihomo["proxies"]
 
@@ -62,6 +67,23 @@ def test_mihomo_and_provider_generation(client_bundle) -> None:
     assert list(yaml.safe_load(provider_response.text)) == ["proxies"]
     assert client.get("/sub/invalid-token").status_code == 404
     assert client.get(f"/sub/{token}?format=singbox").status_code == 400
+
+
+def test_hysteria_server_bandwidth_is_not_copied_to_clients(client_bundle) -> None:
+    client = client_bundle.client
+    _prepare_subscription(client)
+    with client.app.state.database.session_factory() as session:
+        settings = session.get(Settings, 1)
+        node = session.scalar(select(ProxyNode).where(ProxyNode.protocol == "hysteria2"))
+        node.config_json = {
+            **node.config_json,
+            "up_mbps": 100,
+            "down_mbps": 200,
+            "ignore_client_bandwidth": False,
+        }
+        proxy = build_mihomo_proxies([node], settings)[0]
+    assert "up" not in proxy
+    assert "down" not in proxy
 
 
 def test_disabled_nodes_and_self_signed_mode(client_bundle) -> None:

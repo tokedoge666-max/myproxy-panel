@@ -25,7 +25,7 @@ class FakeRunner:
     def __call__(self, command: list[str]) -> CommandResult:
         self.commands.append(command)
         if "version" in command:
-            return CommandResult(0, "sing-box version 1.13.16\n")
+            return CommandResult(0, "sing-box version 1.14.1\n")
         if "check" in command:
             if self.fail_checks:
                 return CommandResult(1, stderr="invalid password=do-not-leak")
