@@ -15,13 +15,14 @@ from app.core.logging import configure_logging
 from app.db import Database
 from app.db.init import initialize_database, validate_initialized_database
 from app.db.migrations import upgrade_database
-from app.services.singbox_service import Runner, SingBoxService
+from app.services.singbox_service import ListenerChecker, Runner, SingBoxService
 
 
 def create_app(
     settings: AppSettings | None = None,
     *,
     runner: Runner | None = None,
+    listener_checker: ListenerChecker | None = None,
     bootstrap_password: str | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
@@ -66,7 +67,11 @@ def create_app(
     )
     application.state.settings = runtime_settings
     application.state.database = database
-    application.state.singbox_service = SingBoxService(runtime_settings, runner=runner)
+    application.state.singbox_service = SingBoxService(
+        runtime_settings,
+        runner=runner,
+        listener_checker=listener_checker,
+    )
     if runtime_settings.allowed_hosts != ("*",):
         application.add_middleware(
             TrustedHostMiddleware, allowed_hosts=list(runtime_settings.allowed_hosts)

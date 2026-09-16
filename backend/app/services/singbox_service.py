@@ -56,6 +56,7 @@ class ApplyFailed(SingBoxError):
 
 
 Runner = Callable[[list[str]], CommandResult]
+ListenerChecker = Callable[[dict[str, Any]], set[tuple[str, int]] | None]
 
 
 def _command_timeout(command: list[str]) -> float:
@@ -86,12 +87,28 @@ def _default_runner(command: list[str]) -> CommandResult:
     return CommandResult(completed.returncode, completed.stdout, completed.stderr)
 
 
+def _default_listener_checker(config: dict[str, Any]) -> set[tuple[str, int]] | None:
+    listening = ipv4_listening_ports()
+    if listening is None:
+        return None
+    return missing_listeners(config, listening)
+
+
 class SingBoxService:
     _apply_lock = threading.RLock()
 
-    def __init__(self, settings: AppSettings, runner: Runner | None = None) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        runner: Runner | None = None,
+        *,
+        listener_checker: ListenerChecker | None = None,
+    ) -> None:
         self.settings = settings
         self.runner = runner or _default_runner
+        self.listener_checker = (
+            listener_checker if listener_checker is not None else _default_listener_checker
+        )
 
     def _run(self, command: list[str]) -> CommandResult:
         try:
@@ -175,10 +192,12 @@ class SingBoxService:
             return {("config", 0)}
         if not isinstance(config, dict):
             return {("config", 0)}
-        listening = ipv4_listening_ports()
-        if listening is None:
-            return None
-        return missing_listeners(config, listening)
+        try:
+            return self.listener_checker(config)
+        except SingBoxError:
+            raise
+        except Exception as exc:
+            raise ApplyFailed("IPv4 listener check failed") from exc
 
     def _restart_locked(self) -> None:
         command = [
@@ -197,7 +216,7 @@ class SingBoxService:
         while True:
             now = time.monotonic()
             missing = self._missing_active_listeners()
-            if self.status() == "running" and not missing:
+            if self.status() == "running" and missing is not None and not missing:
                 active_since = now if active_since is None else active_since
                 if now - active_since >= self.settings.restart_stability_seconds:
                     return

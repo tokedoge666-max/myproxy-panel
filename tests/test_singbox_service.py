@@ -19,7 +19,7 @@ from app.services.singbox_service import (
     SingBoxService,
 )
 from app.services.subscription import generate_mihomo_subscription
-from conftest import FakeRunner, make_settings
+from conftest import FakeRunner, healthy_listener_checker, make_settings
 
 
 def _service_fixture(tmp_path: Path, **overrides):
@@ -33,7 +33,7 @@ def _service_fixture(tmp_path: Path, **overrides):
         app_settings.certificate_path = "/cert.pem"
         app_settings.private_key_path = "/key.pem"
     runner = FakeRunner()
-    service = SingBoxService(settings, runner)
+    service = SingBoxService(settings, runner, listener_checker=healthy_listener_checker)
     return settings, database, runner, service
 
 
@@ -103,7 +103,7 @@ def test_delayed_service_crash_triggers_config_rollback(tmp_path: Path) -> None:
         restart_poll_interval_seconds=0.001,
     )
     runner = DelayedCrashRunner()
-    service = SingBoxService(settings, runner)
+    service = SingBoxService(settings, runner, listener_checker=healthy_listener_checker)
     old_content = '{"old": true}\n'
     settings.singbox_config.write_text(old_content, encoding="utf-8")
 
@@ -126,7 +126,11 @@ def test_runner_oserror_after_replace_triggers_config_rollback(tmp_path: Path) -
             return super().__call__(command)
 
     settings, database, _runner, _service = _service_fixture(tmp_path)
-    service = SingBoxService(settings, BrokenRunner())
+    service = SingBoxService(
+        settings,
+        BrokenRunner(),
+        listener_checker=healthy_listener_checker,
+    )
     old_content = '{"old": true}\n'
     settings.singbox_config.write_text(old_content, encoding="utf-8")
     with (
@@ -174,6 +178,7 @@ def test_backup_retention_and_restore(tmp_path: Path) -> None:
 
 def test_restart_uses_exact_noninteractive_sudo_contract(tmp_path: Path) -> None:
     settings, database, runner, service = _service_fixture(tmp_path, use_sudo=True)
+    settings.singbox_config.write_text('{"inbounds":[]}', encoding="utf-8")
     service.restart()
     restart_command = next(command for command in runner.commands if "restart" in command)
     assert restart_command == [
@@ -190,7 +195,7 @@ def test_restart_uses_exact_noninteractive_sudo_contract(tmp_path: Path) -> None
 
 
 def test_restart_requires_expected_ipv4_listener(tmp_path: Path, monkeypatch) -> None:
-    settings, database, _runner, service = _service_fixture(tmp_path)
+    settings, database, runner, _service = _service_fixture(tmp_path)
     settings.singbox_config.write_text(
         '{"inbounds":[{"type":"hysteria2","listen_port":8443}]}',
         encoding="utf-8",
@@ -199,9 +204,53 @@ def test_restart_requires_expected_ipv4_listener(tmp_path: Path, monkeypatch) ->
         "app.services.singbox_service.ipv4_listening_ports",
         lambda: {"tcp": set(), "udp": set()},
     )
+    service = SingBoxService(settings, runner)
 
     with pytest.raises(ApplyFailed, match="IPv4 listeners"):
         service.restart()
+    database.dispose()
+
+
+def test_restart_fails_closed_when_listener_check_is_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings, database, runner, _service = _service_fixture(tmp_path)
+    settings.singbox_config.write_text(
+        '{"inbounds":[{"type":"hysteria2","listen_port":8443}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "app.services.singbox_service.ipv4_listening_ports",
+        lambda: None,
+    )
+    service = SingBoxService(settings, runner)
+
+    with pytest.raises(ApplyFailed, match="IPv4 listeners"):
+        service.restart()
+    database.dispose()
+
+
+def test_listener_checker_error_restores_previous_config(tmp_path: Path) -> None:
+    settings, database, runner, _service = _service_fixture(tmp_path)
+    old_content = '{"old":true}\n'
+    settings.singbox_config.write_text(old_content, encoding="utf-8")
+    checks = 0
+
+    def flaky_listener_checker(_config: dict) -> set[tuple[str, int]]:
+        nonlocal checks
+        checks += 1
+        if checks == 1:
+            raise OSError("simulated procfs failure")
+        return set()
+
+    service = SingBoxService(settings, runner, listener_checker=flaky_listener_checker)
+    with (
+        database.session_factory() as session,
+        pytest.raises(ApplyFailed, match="restored"),
+    ):
+        service.safe_apply(session)
+
+    assert settings.singbox_config.read_text(encoding="utf-8") == old_content
     database.dispose()
 
 

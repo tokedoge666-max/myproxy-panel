@@ -10,7 +10,7 @@ from app.db.init import initialize_database
 from app.main import create_app
 from app.models import Settings
 from app.services.singbox_service import ConfigValidationFailed, SingBoxService
-from conftest import INITIAL_PASSWORD, FakeRunner, make_settings
+from conftest import INITIAL_PASSWORD, FakeRunner, healthy_listener_checker, make_settings
 
 
 def _configure_tls(client) -> None:
@@ -125,7 +125,12 @@ def test_production_app_does_not_publish_docs(tmp_path) -> None:
     )
     database.dispose()
     runner = FakeRunner()
-    app = create_app(settings, runner=runner, bootstrap_password=INITIAL_PASSWORD)
+    app = create_app(
+        settings,
+        runner=runner,
+        listener_checker=healthy_listener_checker,
+        bootstrap_password=INITIAL_PASSWORD,
+    )
     with TestClient(app) as client:
         assert client.get("/docs").status_code == 404
         assert client.get("/openapi.json").status_code == 404
@@ -140,7 +145,7 @@ def test_production_startup_reconciles_divergent_config_from_database(tmp_path) 
     database.dispose()
 
     runner = FakeRunner()
-    app = create_app(settings, runner=runner)
+    app = create_app(settings, runner=runner, listener_checker=healthy_listener_checker)
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
 
@@ -161,7 +166,7 @@ def test_production_startup_finishes_interrupted_reconcile_restart(tmp_path) -> 
     database.dispose()
 
     runner = FakeRunner()
-    app = create_app(settings, runner=runner)
+    app = create_app(settings, runner=runner, listener_checker=healthy_listener_checker)
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
 
@@ -179,7 +184,7 @@ def test_production_reconcile_failure_prevents_startup_and_keeps_config(tmp_path
 
     runner = FakeRunner()
     runner.fail_checks = True
-    app = create_app(settings, runner=runner)
+    app = create_app(settings, runner=runner, listener_checker=healthy_listener_checker)
     with pytest.raises(ConfigValidationFailed):
         with TestClient(app):
             pass
@@ -191,7 +196,11 @@ def test_production_reconcile_failure_prevents_startup_and_keeps_config(tmp_path
 
 def test_production_missing_database_fails_closed(tmp_path) -> None:
     settings = make_settings(tmp_path, environment="production")
-    app = create_app(settings, runner=FakeRunner())
+    app = create_app(
+        settings,
+        runner=FakeRunner(),
+        listener_checker=healthy_listener_checker,
+    )
     with pytest.raises(RuntimeError, match="database is missing"):
         with TestClient(app):
             pass

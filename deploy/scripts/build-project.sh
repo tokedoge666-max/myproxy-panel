@@ -82,7 +82,7 @@ build_backend() {
     UV_PYTHON_INSTALL_DIR="$UV_PYTHON_INSTALL_DIR" \
     UV_CACHE_DIR="$UV_CACHE_DIR" \
     UV_PYTHON_PREFERENCE=only-managed \
-    "$UV_BIN" --no-config python install "$PYTHON_VERSION"
+    "$UV_BIN" --no-config python install --no-bin "$PYTHON_VERSION"
 
   log "syncing backend validation dependencies"
   (cd -- "$MYPROXY_ROOT/backend" && \

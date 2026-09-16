@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +14,10 @@ from app.services.singbox_service import CommandResult
 
 INITIAL_PASSWORD = "Initial-Password-123!"
 CHANGED_PASSWORD = "Better-Password-456!"
+
+
+def healthy_listener_checker(_config: dict[str, Any]) -> set[tuple[str, int]]:
+    return set()
 
 
 class FakeRunner:
@@ -75,7 +80,12 @@ class ClientBundle:
 def client_bundle(tmp_path: Path) -> ClientBundle:
     settings = make_settings(tmp_path)
     runner = FakeRunner()
-    app = create_app(settings, runner=runner, bootstrap_password=INITIAL_PASSWORD)
+    app = create_app(
+        settings,
+        runner=runner,
+        listener_checker=healthy_listener_checker,
+        bootstrap_password=INITIAL_PASSWORD,
+    )
     with TestClient(app) as client:
         yield ClientBundle(client, settings, runner)
 
