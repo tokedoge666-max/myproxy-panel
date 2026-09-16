@@ -304,14 +304,18 @@ replace_runtime_dir() {
 
 install_uv() {
   local triple archive checksum_manifest official_hash extracted stage destination asset_name
-  local uv_source uvx_source
+  local uv_source uvx_source installed_version reported_version
   destination="$MYPROXY_ROOT/.runtime/uv"
+  # Release builds append platform/build metadata to `uv --version`; use the
+  # machine-readable short form so the pinned semantic version is exact.
   if [[ -x "$destination/bin/uv" && -f "$destination/bin/uv" && \
     ! -L "$destination/bin/uv" && -f "$destination/VERSION" && ! -L "$destination/VERSION" ]] && \
-    [[ "$(<"$destination/VERSION")" == "$UV_VERSION" ]] && \
-    run_as_myproxy "$destination/bin/uv" --version | grep -Fqx "uv $UV_VERSION"; then
-    log "uv $UV_VERSION is already installed"
-    return
+    [[ "$(<"$destination/VERSION")" == "$UV_VERSION" ]]; then
+    installed_version=$(run_as_myproxy "$destination/bin/uv" self version --short 2>/dev/null || true)
+    if [[ "$installed_version" == "$UV_VERSION" ]]; then
+      log "uv $UV_VERSION is already installed"
+      return
+    fi
   fi
 
   case "$MACHINE_ARCH" in
@@ -341,8 +345,11 @@ install_uv() {
   chown root:"$MYPROXY_GROUP" "$stage/VERSION"
   chmod 0640 "$stage/VERSION"
   seal_stage_for_probe "$stage"
-  run_as_myproxy "$stage/bin/uv" --version | grep -Fqx "uv $UV_VERSION" || \
-    die "downloaded uv version mismatch"
+  if ! reported_version=$(run_as_myproxy "$stage/bin/uv" self version --short); then
+    die "downloaded uv could not execute"
+  fi
+  [[ "$reported_version" == "$UV_VERSION" ]] || \
+    die "downloaded uv version mismatch: expected $UV_VERSION, got ${reported_version:-empty}"
   replace_runtime_dir "$stage" "$destination"
   log "installed uv $UV_VERSION (official and repository SHA256 verified)"
 }
